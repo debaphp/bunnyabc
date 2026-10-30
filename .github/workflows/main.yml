@@ -1,0 +1,67 @@
+name: Build Bunny ABC
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HAS_KEY: ${{ secrets.ONKO_KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # If you uploaded BunnyABC.zip instead of the loose files, unpack it over the repo
+      - name: Unpack BunnyABC.zip (optional)
+        run: |
+          if [ -f BunnyABC.zip ]; then
+            unzip -o -q BunnyABC.zip -d _zip
+            if [ -d _zip/BunnyABC ]; then cp -r _zip/BunnyABC/. . ; else cp -r _zip/. . ; fi
+            rm -rf _zip
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Build test APK
+        run: gradle --no-daemon assembleDebug
+
+      - name: Rename test APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk bunny-abc.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bunny-abc.apk
+          path: bunny-abc.apk
+
+      # Signed .aab for Play Console – uses the same repo secrets as MathFairy
+      - name: Decode upload key
+        if: env.HAS_KEY == 'true'
+        env:
+          KS: ${{ secrets.ONKO_KEYSTORE_BASE64 }}
+        run: |
+          echo "$KS" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          echo "KEYSTORE_FILE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+
+      - name: Build signed AAB
+        if: env.HAS_KEY == 'true'
+        env:
+          KEY_PASSWORD: ${{ secrets.ONKO_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ONKO_KEY_ALIAS }}
+        run: |
+          gradle --no-daemon bundleRelease
+          cp app/build/outputs/bundle/release/app-release.aab bunny-abc-play-store.aab
+
+      - uses: actions/upload-artifact@v4
+        if: env.HAS_KEY == 'true'
+        with:
+          name: bunny-abc-play-store
+          path: bunny-abc-play-store.aab
